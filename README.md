@@ -14,7 +14,7 @@
 +---------+
 |free list|
 +---------+
-|hole file|
+| unix io |
 +---------+
 ```
 
@@ -135,7 +135,7 @@ Use hierarchy similar to index file.
 +---------+
 |free list|
 +---------+
-|hole file|
+| unix io |
 +---------+
 ```
 
