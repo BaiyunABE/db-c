@@ -141,7 +141,7 @@ Use hierarchy similar to index file.
 
 Compare with index file,
 - Data file has no header now, because no information of hole file need to memory.
-- There is not B+ node, but data, maybe string or binary data whose format is defined by user.
+- There is no B+ node, but data, maybe string or binary data whose format is defined by user.
 - Different allocated node may have different size, which request more intelligent allocating strategy.
 - When a B+ node in index file is a leaf, its children means offset in this file.
 
