@@ -146,7 +146,7 @@ Compare with index file,
 - When a B+ node in index file is a leaf, its children means offset in this file.
 
 ## Steps
-1. Translate codes in `db-cpp` to C.
+1. Translate codes in `db-cpp` to C.(done)
 2. Add free list.
 3. Cache.
 4. Add new functions.

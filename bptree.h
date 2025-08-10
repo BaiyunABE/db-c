@@ -6,12 +6,18 @@
 
 #include <stdint.h>
 
-void init(const char*& fn);
-int insert(uint64_t key, char* data);
+void init(const char* fn);
+
+int insert(uint64_t key, const char* data);
+
 char* find(uint64_t key);
-char** find_range(uint64_t left, uint64_t right);
+
+// char** find_range(uint64_t left, uint64_t right);
+
 int erase(uint64_t key);
-int update(uint64_t key, char* data);
+
+int update(uint64_t key, const char* data);
+
 void destroy();
 
 #endif // _BPTREE_H_

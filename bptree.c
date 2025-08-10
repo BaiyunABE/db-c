@@ -39,12 +39,24 @@ void init(const char* fn) {
   idx_fn = malloc(len + 5);
   strcpy(idx_fn, fn);
   strcpy(idx_fn + len, ".idx");
-	idx_fp = fopen(idx_fn, "wb+");
-	fread(&idx_header, sizeof(idx_header), 1, idx_fp);
+	idx_fp = fopen(idx_fn, "rb+");
+  if (idx_fp == NULL) {
+    idx_fp = fopen(idx_fn, "wb+");
+    idx_header.root = sizeof(idx_header);
+    idx_header.height = 0;
+    idx_header.size = 0;
+    fwrite(&idx_header, sizeof(idx_header), 1, idx_fp);
+  }
+  else {
+    fread(&idx_header, sizeof(idx_header), 1, idx_fp);
+  }
   dat_fn = malloc(len + 5);
 	strcpy(dat_fn, fn);
   strcpy(dat_fn + len, ".dat");
-	dat_fp = fopen(dat_fn, "wb+");
+	dat_fp = fopen(dat_fn, "rb+");
+  if (dat_fp == NULL) {
+    dat_fp = fopen(dat_fn, "wb+");
+  }
 }
 
 static void update_idx_header() {
@@ -80,36 +92,45 @@ static uint64_t alloc_idx_node(bpnode node) {
 	return offset;
 }
 
-uint64_t alloc_data(const char* data, uint64_t size) {
+static void free_idx_node(uint64_t offset) {
+  // coding later
+  uint64_t tmp = offset;
+  offset = tmp;
+}
+
+uint64_t alloc_data(const char* data) {
+  uint64_t len = strlen(data);
   fseek(dat_fp, 0, SEEK_END);
 	uint64_t offset = ftell(dat_fp);
-  fwrite(&size, sizeof(size), 1, dat_fp);
-  fwrite(data, sizeof(*data), size, dat_fp);
+  fwrite(&len, sizeof(len), 1, dat_fp);
+  fwrite(data, sizeof(*data), len, dat_fp);
   fwrite("\0", 1, 1, dat_fp); // three fwrite can merge to one
   fflush(dat_fp);
 	return offset;
 }
 
-static int update_data(uint64_t offset, const char* data, uint64_t size) {
+static int update_data(uint64_t offset, const char* data) {
+  uint64_t len = strlen(data);
 	fseek(dat_fp, offset, SEEK_SET);
 	uint64_t cap;
   fread(&cap, sizeof(cap), 1, dat_fp);
-	if (cap < size)
+	if (cap < len)
 		return 0;
   fseek(dat_fp, offset, SEEK_SET);
-  fwrite(&size, sizeof(size), 1, dat_fp);
-  fwrite(data, sizeof(*data), size, dat_fp);
+  fwrite(&len, sizeof(len), 1, dat_fp);
+  fwrite(data, sizeof(*data), len, dat_fp);
   fwrite("\0", 1, 1, dat_fp); // three fwrite can merge to one
 	fflush(dat_fp);
   return 1;
 }
 
 static void split_ith_child(uint64_t offset, int i) {
-	bpnode parent, left;
+	bpnode parent, left, right;
 	read_idx_node(&parent, offset);
 	read_idx_node(&left, parent.children[i]);
 	// set right
-	bpnode right(left.type, ORDER / 2);
+  right.type = left.type;
+  right.size = ORDER / 2;
 	for (int j = 0; j < ORDER / 2; j++)
 		right.keys[j] = left.keys[j + ORDER / 2];
 	for (int j = 0; j < ORDER / 2; j++)
@@ -133,7 +154,7 @@ static void split_ith_child(uint64_t offset, int i) {
 	update_idx_node(right, parent.children[i + 1]);
 }
 
-static int insert_nonfull(uint64_t offset, uint64_t key, char* data) {
+static int insert_nonfull(uint64_t offset, uint64_t key, const char* data) {
 	// read node
 	bpnode root;
 	read_idx_node(&root, offset);
@@ -148,7 +169,7 @@ static int insert_nonfull(uint64_t offset, uint64_t key, char* data) {
 		for (i = root.size - 1; i >= 0 && key < root.keys[i]; i--)
 			root.children[i + 1] = root.children[i];
 		root.keys[i + 1] = key;
-		root.children[i + 1] = alloc_data(data, data.size());
+		root.children[i + 1] = alloc_data(data);
 		root.size++;
 		update_idx_node(root, offset);
 		return 1;
@@ -173,12 +194,14 @@ static int insert_nonfull(uint64_t offset, uint64_t key, char* data) {
 	}
 }
 
-int insert(uint64_t key, char* data) {
+int insert(uint64_t key, const char* data) {
 	if (idx_header.height == 0) {
-		bpnode root(0x02, 1); // leaf
-		root.keys[0] = key;
+		bpnode root;
+    root.type = 0x02; // leaf
+    root.size = 1;
+    root.keys[0] = key;
 		root.next = 0x0; // null
-		root.children[0] = alloc_data(data, data.size());
+		root.children[0] = alloc_data(data);
 		alloc_idx_node(root);
 		idx_header.height++;
 		return 1;
@@ -223,16 +246,17 @@ static uint64_t find_recursive(uint64_t key, uint64_t offset) {
 
 char* find(uint64_t key) {
 	if (idx_header.height == 0)
-		return "null";
+		return strdup("null");
 	else {
 		uint64_t offset = find_recursive(key, idx_header.root);
 		if (offset == 0xffffffffffffffff)
-			return "null";
+			return strdup("null");
 		else
 			return read_data(offset);
 	}
 }
 
+/*
 static uint64_t find_idx_node_recursive(uint64_t key, uint64_t offset) {
 	bpnode root;
 	read_idx_node(&root, offset);
@@ -248,7 +272,7 @@ static uint64_t find_idx_node_recursive(uint64_t key, uint64_t offset) {
 }
 
 char** find_range(uint64_t left, uint64_t right) {
-	vector<char*> res;
+	char** res;
 	if (idx_header.height == 0)
 		return res;
 	else {
@@ -261,17 +285,14 @@ char** find_range(uint64_t left, uint64_t right) {
 				read_idx_node(&leaf, offset);
 				for (int i = 0; i < leaf.size; i++)
 					if (leaf.keys[i] >= left && leaf.keys[i] < right)
-						res.push_back(read_data(leaf.children[i]));
+						res.push_back(read_data(leaf.children[i])); // use dynamic array
 				offset = leaf.next;
 			} while (leaf.keys[leaf.size - 1] < right && offset != 0x0);
 			return res;
 		}
 	}
 }
-
-static void free_idx_node(uint64_t offset) {
-	// ...
-}
+*/
 
 static void merge_child(uint64_t offset, int i) {
 	bpnode root, left, right;
@@ -296,7 +317,7 @@ static void merge_child(uint64_t offset, int i) {
 	update_idx_node(root, offset);
 }
 
-static int find_idx(bpnode& node, uint64_t key) {
+static int find_idx(bpnode node, uint64_t key) {
 	int i;
 	for (i = 0; i < node.size; i++)
 		if (node.keys[i] >= key)
@@ -411,14 +432,14 @@ int erase(uint64_t key) {
 	return res;
 }
 
-int update(uint64_t key, char* data) {
+int update(uint64_t key, const char* data) {
 	if (idx_header.height == 0)
 		return 0;
 	uint64_t offset = find_recursive(key, idx_header.root);
 	if (offset == 0xffffffffffffffff)
 		return 0;
 	else {
-		if (!update_data(offset, data, data.size())) {
+		if (!update_data(offset, data)) {
 			erase(key);
 			insert(key, data);
 		}
