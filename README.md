@@ -145,6 +145,23 @@ Compare with index file,
 - Different allocated node may have different size, which request more intelligent allocating strategy.
 - When a B+ node in index file is a leaf, its children means offset in this file.
 
+### Data Node
+
+Use byte count method to isolate each data. Format is below.
+
+```text
+0    8   16   24   32   40   48   56  63
++--------------------------------------+
+|                 size                 |
++--------------------------------------+
+/                                      /
+/                 data                 /
+/                                      /
++--------------------------------------+
+```
+
+- `size`: The size of data.
+
 ## Steps
 1. Translate codes in `db-cpp` to C.(done)
 2. Add free list.

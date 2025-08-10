@@ -70,12 +70,12 @@ static void read_idx_node(bpnode* node, uint64_t offset) {
   fread(node, sizeof(*node), 1, idx_fp);
 }
 
-static char* read_data(uint64_t offset) {
+static data_t* read_data(uint64_t offset) {
 	fseek(dat_fp, offset, SEEK_SET);
-	uint64_t size;
-	fread(&size, sizeof(size), 1, dat_fp);
-	char* data = malloc((size + 1) * sizeof(char));
-	fread(data, sizeof(*data), size + 1, dat_fp);
+	data_t* data = malloc(sizeof(data_t));
+	fread(&data->size, sizeof(data->size), 1, dat_fp);
+	data->data = malloc(data->size * sizeof(char));
+	fread(data->data, sizeof(*data->data), data->size, dat_fp);
 	return data;
 }
 
@@ -98,28 +98,24 @@ static void free_idx_node(uint64_t offset) {
   offset = tmp;
 }
 
-uint64_t alloc_data(const char* data) {
-  uint64_t len = strlen(data);
+uint64_t alloc_data(const char* data, uint64_t size) {
   fseek(dat_fp, 0, SEEK_END);
 	uint64_t offset = ftell(dat_fp);
-  fwrite(&len, sizeof(len), 1, dat_fp);
-  fwrite(data, sizeof(*data), len, dat_fp);
-  fwrite("\0", 1, 1, dat_fp); // three fwrite can merge to one
+  fwrite(&size, sizeof(size), 1, dat_fp);
+  fwrite(data, sizeof(*data), size, dat_fp);
   fflush(dat_fp);
 	return offset;
 }
 
-static int update_data(uint64_t offset, const char* data) {
-  uint64_t len = strlen(data);
+static int update_data(uint64_t offset, const char* data, uint64_t size) {
 	fseek(dat_fp, offset, SEEK_SET);
 	uint64_t cap;
   fread(&cap, sizeof(cap), 1, dat_fp);
-	if (cap < len)
+	if (cap < size)
 		return 0;
   fseek(dat_fp, offset, SEEK_SET);
-  fwrite(&len, sizeof(len), 1, dat_fp);
-  fwrite(data, sizeof(*data), len, dat_fp);
-  fwrite("\0", 1, 1, dat_fp); // three fwrite can merge to one
+  fwrite(&size, sizeof(size), 1, dat_fp);
+  fwrite(data, sizeof(*data), size, dat_fp);
 	fflush(dat_fp);
   return 1;
 }
@@ -154,7 +150,7 @@ static void split_ith_child(uint64_t offset, int i) {
 	update_idx_node(right, parent.children[i + 1]);
 }
 
-static int insert_nonfull(uint64_t offset, uint64_t key, const char* data) {
+static int insert_nonfull(uint64_t offset, uint64_t key, const char* data, uint64_t size) {
 	// read node
 	bpnode root;
 	read_idx_node(&root, offset);
@@ -169,7 +165,7 @@ static int insert_nonfull(uint64_t offset, uint64_t key, const char* data) {
 		for (i = root.size - 1; i >= 0 && key < root.keys[i]; i--)
 			root.children[i + 1] = root.children[i];
 		root.keys[i + 1] = key;
-		root.children[i + 1] = alloc_data(data);
+		root.children[i + 1] = alloc_data(data, size);
 		root.size++;
 		update_idx_node(root, offset);
 		return 1;
@@ -190,18 +186,18 @@ static int insert_nonfull(uint64_t offset, uint64_t key, const char* data) {
 			if (key > root.keys[i])
 				i++;
 		}
-		return insert_nonfull(root.children[i], key, data);
+		return insert_nonfull(root.children[i], key, data, size);
 	}
 }
 
-int insert(uint64_t key, const char* data) {
+int insert(uint64_t key, const char* data, uint64_t size) {
 	if (idx_header.height == 0) {
 		bpnode root;
     root.type = 0x02; // leaf
     root.size = 1;
     root.keys[0] = key;
 		root.next = 0x0; // null
-		root.children[0] = alloc_data(data);
+		root.children[0] = alloc_data(data, size);
 		alloc_idx_node(root);
 		idx_header.height++;
 		return 1;
@@ -219,7 +215,7 @@ int insert(uint64_t key, const char* data) {
 			split_ith_child(idx_header.root, 0);
 			idx_header.height++;
 		}
-		return insert_nonfull(idx_header.root, key, data);
+		return insert_nonfull(idx_header.root, key, data, size);
 	}
 }
 
@@ -244,15 +240,24 @@ static uint64_t find_recursive(uint64_t key, uint64_t offset) {
 	}
 }
 
-char* find(uint64_t key) {
-	if (idx_header.height == 0)
-		return strdup("null");
+data_t* find(uint64_t key) {
+  if (idx_header.height == 0) {
+	  data_t* data = malloc(sizeof(data_t));
+    data->size = 0;
+    data->data = NULL;
+    return data;
+  }
 	else {
 		uint64_t offset = find_recursive(key, idx_header.root);
-		if (offset == 0xffffffffffffffff)
-			return strdup("null");
-		else
+		if (offset == 0xffffffffffffffff) {
+		  data_t* data = malloc(sizeof(data_t));
+      data->size = 0;
+      data->data = NULL;
+      return data;
+    }
+		else {
 			return read_data(offset);
+    }
 	}
 }
 
@@ -432,16 +437,16 @@ int erase(uint64_t key) {
 	return res;
 }
 
-int update(uint64_t key, const char* data) {
+int update(uint64_t key, const char* data, uint64_t size) {
 	if (idx_header.height == 0)
 		return 0;
 	uint64_t offset = find_recursive(key, idx_header.root);
 	if (offset == 0xffffffffffffffff)
 		return 0;
 	else {
-		if (!update_data(offset, data)) {
+		if (!update_data(offset, data, size)) {
 			erase(key);
-			insert(key, data);
+			insert(key, data, size);
 		}
 	}
 	return 1;
