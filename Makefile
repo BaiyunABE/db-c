@@ -1,5 +1,5 @@
 all:
-	gcc -Wall -Wextra -g bptree.c main.c -o output
+	gcc -Wall -Wextra -g bptree.c main.c -o main
 
 clean:
-	rm -f output *.idx *.dat
+	rm -f main *.idx *.dat
