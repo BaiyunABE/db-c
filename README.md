@@ -19,7 +19,7 @@
 ```
 
 1. Use C library functions, like `fopen()`, `fclose()`, `fread()`, `fwrite()`, `fseek()` and so on.
-2. Use free list and provide function like `alloc_idx_node()`, `free_idx_node()` and so on.
+2. Use free list and provide function like `alloc_node()`, `free_node()` and so on.
 3. Use B+ tree and provide function like `create()`, `insert()`, `erase()`, `update()` and so on.
 4. Use finite state machine to support request of application layer, like SQL.
 

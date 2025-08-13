@@ -1,5 +1,7 @@
 /*
  * bptree.c
+ *
+ * - file pointer's position is unknown after you call any function.
 */
 #include "bptree.h"
 #include <stdio.h>
@@ -9,6 +11,9 @@
 #define ORDER 4
 #define NODE_SIZE (sizeof(bpnode) + sizeof(header_t))
 #define MAGIC 0x1234567
+#define BRUNCH 0x01
+#define LEAF 0x02
+#define HEAD 0x0
 
 static char* idx_fn;
 static char* dat_fn;
@@ -35,6 +40,11 @@ typedef struct {
 	uint64_t next;
 } bpnode;
 
+/*
+ * do initialization of bptree.
+ * - if file exist, open the file and read the header.
+ * - if not, create the file, initialize the header and the free list.
+ */
 void init(const char* fn) {
   int len = strlen(fn);
   idx_fn = malloc(len + 5);
@@ -65,17 +75,30 @@ void init(const char* fn) {
   }
 }
 
+/*
+ * update idx_header to file
+ */
 static void update_idx_header() {
-	fseek(idx_fp, 0x0, SEEK_SET);
+	fseek(idx_fp, HEAD, SEEK_SET);
   fwrite(&idx_header, sizeof(idx_header), 1, idx_fp);
 	fflush(idx_fp);
 }
 
+/*
+ * read one node
+ */
 static void read_node(bpnode* node, uint64_t offset) {
 	fseek(idx_fp, offset, SEEK_SET);
   fread(node, sizeof(*node), 1, idx_fp);
 }
 
+/*
+ * read one data
+ *
+ * when data is used,
+ * - free(data->data);
+ * - free(data);
+ */
 static data_t* read_data(uint64_t offset) {
 	fseek(dat_fp, offset, SEEK_SET);
 	data_t* data = malloc(sizeof(data_t));
@@ -85,13 +108,20 @@ static data_t* read_data(uint64_t offset) {
 	return data;
 }
 
-static void update_node(bpnode node, uint64_t offset) {
+/*
+ * write one node
+ */
+static void update_node(const bpnode* node, uint64_t offset) {
 	fseek(idx_fp, offset, SEEK_SET);
-	fwrite(&node, sizeof(node), 1, idx_fp);
+	fwrite(node, sizeof(*node), 1, idx_fp);
   fflush(idx_fp);
 }
 
-static uint64_t alloc_node(bpnode node) {
+/*
+ * allocate a space for a node and write it
+ * return the offset of the new node
+ */
+static uint64_t alloc_node(const bpnode* node) {
 	uint64_t offset = idx_header.head + sizeof(header_t); // return ptr to allocated space
   header_t header;
   fseek(idx_fp, idx_header.head, SEEK_SET);
@@ -120,6 +150,10 @@ static uint64_t alloc_node(bpnode node) {
 	return offset;
 }
 
+/*
+ * free a node allocated by `alloc_node()`
+ * if offset is illegal, abort
+ */
 static void free_node(uint64_t offset) {
   header_t header;
   offset -= sizeof(header_t);
@@ -127,6 +161,7 @@ static void free_node(uint64_t offset) {
   fread(&header, sizeof(header), 1, idx_fp);
   if (header.next != MAGIC) {
     fprintf(stderr, "error: free_node: wrong magic number.\n");
+    abort();
   }
 
   header.next = idx_header.head;
@@ -138,6 +173,11 @@ static void free_node(uint64_t offset) {
   update_idx_header();
 }
 
+/*
+ * allocate a space for a data and write it
+ * return the offset of the new data
+ * this function will be updated next version
+ */
 uint64_t alloc_data(const char* data, uint64_t size) {
   fseek(dat_fp, 0, SEEK_END);
 	uint64_t offset = ftell(dat_fp);
@@ -147,6 +187,10 @@ uint64_t alloc_data(const char* data, uint64_t size) {
 	return offset;
 }
 
+/*
+ * try to update a data to the offset
+ * return `1` if success and `0` if fail
+ */
 static int update_data(uint64_t offset, const char* data, uint64_t size) {
 	fseek(dat_fp, offset, SEEK_SET);
 	uint64_t cap;
@@ -171,23 +215,23 @@ static void split_ith_child(uint64_t offset, int i) {
 		right.keys[j] = left.keys[j + ORDER / 2];
 	for (int j = 0; j < ORDER / 2; j++)
 		right.children[j] = left.children[j + ORDER / 2];
-	if (left.type == 0x02) // leaf
+	if (left.type == LEAF)
 		right.next = left.next;
 	// set left
 	left.size = ORDER / 2;
 	// set p
 	for (int j = parent.size - 1; j > i; j--)
 		parent.children[j + 1] = parent.children[j];
-	parent.children[i + 1] = alloc_node(right);
-	if (left.type == 0x02) // leaf
+	parent.children[i + 1] = alloc_node(&right);
+	if (left.type == LEAF)
 		left.next = parent.children[i + 1];
 	for (int j = parent.size - 1; j >= i; j--)
 		parent.keys[j + 1] = parent.keys[j];
 	parent.keys[i] = left.keys[ORDER / 2 - 1];
 	parent.size++;
-	update_node(parent, offset);
-	update_node(left, parent.children[i]);
-	update_node(right, parent.children[i + 1]);
+	update_node(&parent, offset);
+	update_node(&left, parent.children[i]);
+	update_node(&right, parent.children[i + 1]);
 }
 
 static int insert_nonfull(uint64_t offset, uint64_t key, const char* data, uint64_t size) {
@@ -195,7 +239,7 @@ static int insert_nonfull(uint64_t offset, uint64_t key, const char* data, uint6
 	bpnode root;
 	read_node(&root, offset);
 	// insert
-	if (root.type == 0x02) { // root is leaf
+	if (root.type == LEAF) {
 		for (int i = 0; i < root.size; i++)
 			if (root.keys[i] == key)
 				return 0;
@@ -207,16 +251,16 @@ static int insert_nonfull(uint64_t offset, uint64_t key, const char* data, uint6
 		root.keys[i + 1] = key;
 		root.children[i + 1] = alloc_data(data, size);
 		root.size++;
-		update_node(root, offset);
+		update_node(&root, offset);
 		return 1;
 	}
-	else { // root is brunch
+	else {
 		int i;
 		for (i = 0; i < root.size && key > root.keys[i]; i++);
 		if (i == root.size) {
 			i--;
 			root.keys[i] = key;
-			update_node(root, offset);
+			update_node(&root, offset);
 		}
 		bpnode node;
 		read_node(&node, root.children[i]);
@@ -231,14 +275,14 @@ static int insert_nonfull(uint64_t offset, uint64_t key, const char* data, uint6
 }
 
 int insert(uint64_t key, const char* data, uint64_t size) {
-	if (idx_header.height == 0) {
+	if (idx_header.root == 0) {
 		bpnode root;
     root.type = 0x02; // leaf
     root.size = 1;
     root.keys[0] = key;
 		root.next = 0x0; // null
 		root.children[0] = alloc_data(data, size);
-		idx_header.root = alloc_node(root);
+		idx_header.root = alloc_node(&root);
 		idx_header.height++;
     update_idx_header();
 		return 1;
@@ -252,7 +296,7 @@ int insert(uint64_t key, const char* data, uint64_t size) {
 			parent.size = 1;
 			parent.keys[0] = root.keys[ORDER - 1];
 			parent.children[0] = idx_header.root;
-			idx_header.root = alloc_node(parent);
+			idx_header.root = alloc_node(&parent);
 			split_ith_child(idx_header.root, 0);
 			idx_header.height++;
       update_idx_header();
@@ -264,7 +308,7 @@ int insert(uint64_t key, const char* data, uint64_t size) {
 static uint64_t find_recursive(uint64_t key, uint64_t offset) {
 	bpnode root;
 	read_node(&root, offset);
-	if (root.type == 0x01) { // brunch
+	if (root.type == BRUNCH) {
 		int i;
 		for (i = 0; i < root.size && key > root.keys[i]; i++);
 		if (i == root.size)
@@ -272,7 +316,7 @@ static uint64_t find_recursive(uint64_t key, uint64_t offset) {
 		else
 			return find_recursive(key, root.children[i]);
 	}
-	else { // leaf
+	else {
 		int i;
 		for (i = 0; i < root.size && key != root.keys[i]; i++);
 		if (i < root.size)
@@ -352,7 +396,7 @@ static void merge_child(uint64_t offset, int i) {
 	for (int j = 0; j < ORDER / 2; j++)
 		left.children[j + ORDER / 2] = right.children[j];
 	left.size = ORDER;
-	update_node(left, root.children[i]);
+	update_node(&left, root.children[i]);
 	// set right
 	free_node(root.children[i + 1]);
 	// set root
@@ -361,7 +405,7 @@ static void merge_child(uint64_t offset, int i) {
 		root.keys[j] = root.keys[j + 1];
 	for (int j = i + 1; j < root.size; j++)
 		root.children[j] = root.children[j + 1];
-	update_node(root, offset);
+	update_node(&root, offset);
 }
 
 static int find_idx(bpnode node, uint64_t key) {
@@ -378,7 +422,7 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 	int i = find_idx(root, key);
 	if (i >= root.size)
 		return 0;
-	else if (root.type == 0x02) { // leaf
+	else if (root.type == LEAF) {
 		if (root.keys[i] != key)
 			return 0;
 		else {
@@ -387,11 +431,11 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 				root.keys[j] = root.keys[j + 1];
 			for (int j = i; j < root.size; j++)
 				root.children[j] = root.children[j + 1];
-			update_node(root, offset);
+			update_node(&root, offset);
 			return 1;
 		}
 	}
-	else { // brunch
+	else {
 		bpnode node;
 		read_node(&node, root.children[i]);
 		if (node.size == ORDER / 2) { // underflow
@@ -410,13 +454,13 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 					if (node.type == 0x01)   // leaf
 						node.children[0] = left.children[left.size - 1];
 					node.size++;
-					update_node(node, root.children[i]);
+					update_node(&node, root.children[i]);
 					// set left
 					left.size--;
-					update_node(left, root.children[i - 1]);
+					update_node(&left, root.children[i - 1]);
 					// set root
 					root.keys[i - 1] = left.keys[left.size - 1];
-					update_node(root, offset);
+					update_node(&root, offset);
 					underflow = 0;
 				}
 			}
@@ -428,17 +472,17 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 					node.keys[node.size] = right.keys[0];
 					node.children[node.size] = right.children[0];
 					node.size++;
-					update_node(node, root.children[i]);
+					update_node(&node, root.children[i]);
 					// set right
 					right.size--;
 					for (int j = 0; j < right.size; j++)
 						right.keys[j] = right.keys[j + 1];
 					for (int j = 0; j < right.size; j++)
 						right.children[j] = right.children[j + 1];
-					update_node(right, root.children[i + 1]);
+					update_node(&right, root.children[i + 1]);
 					// set root
 					root.keys[i] = node.keys[node.size - 1];
-					update_node(root, offset);
+					update_node(&root, offset);
 					underflow = 0;
 				}
 			}
@@ -456,7 +500,7 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 		read_node(&node, root.children[i]);
 		if (root.keys[i] != node.keys[node.size - 1]) {
 			root.keys[i] = node.keys[node.size - 1];
-			update_node(root, offset);
+			update_node(&root, offset);
 		}
 		return res;
 	}
@@ -473,7 +517,7 @@ int erase(uint64_t key) {
     idx_header.root = 0;
     idx_header.height = 0;
   }
-	while (root.size == 1 && root.type == 0x01) { // brunch
+	while (root.size == 1 && root.type == BRUNCH) {
 		free_node(idx_header.root);
 		idx_header.root = root.children[0];
 		idx_header.height--;
