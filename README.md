@@ -27,6 +27,8 @@
 ```text
 0    8   16   24   32   40   48   56  63
 +--------------------------------------+
+|                 head                 |
++--------------------------------------+
 |                 root                 |
 +--------------------------------------+
 |                height                |
@@ -35,12 +37,14 @@
 +--------------------------------------+
 ```
 
+- `head`: The offset of the head node of free list.
 - `root`: The offset of the root of the B+ tree.
 - `height`: The height of the B+ tree.
 - `size`: The number of the nodes of the B+ tree.
 
 ```c
 typedef struct {
+  uint64_t head;
   uint64_t root;
   uint64_t height;
   uint64_t size;
