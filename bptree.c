@@ -97,11 +97,11 @@ static uint64_t alloc_node(bpnode node) {
   fseek(idx_fp, idx_header.head, SEEK_SET);
   fread(&header, sizeof(header), 1, idx_fp);
 	if (header.size == sizeof(bpnode)) { // allocate the hole block
-    idx_header.head = header.next;
-		header.next = MAGIC;
+		uint64_t magic = MAGIC;
     printf("write MAGIC to 0x%lx\n", idx_header.head);
-    fseek(idx_fp, idx_header.head, SEEK_SET);
-    fwrite(&header, sizeof(header), 1, idx_fp);
+    fseek(idx_fp, idx_header.head + sizeof(header.size), SEEK_SET);
+    fwrite(&magic, sizeof(magic), 1, idx_fp);
+    idx_header.head = header.next;
 	}
 	else { // split
     fseek(idx_fp, idx_header.head + NODE_SIZE, SEEK_SET);
