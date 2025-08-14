@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #define ORDER 4
 #define NODE_SIZE (sizeof(bpnode) + sizeof(header_t))
@@ -14,6 +15,8 @@
 #define BRUNCH 0x01
 #define LEAF 0x02
 #define HEAD 0x0
+#define INFINITY 0xffffffffffffffff
+#define MIN_BLOCK_SIZE 32
 
 static char* idx_fn;
 static char* dat_fn;
@@ -23,6 +26,10 @@ static struct {
 	uint64_t height;
 	uint64_t size;
 } idx_header;
+static struct {
+  uint64_t head;
+  uint64_t size;
+} dat_header;
 static FILE* idx_fp;
 static FILE* dat_fp;
 
@@ -47,31 +54,53 @@ typedef struct {
  */
 void init(const char* fn) {
   int len = strlen(fn);
+
   idx_fn = malloc(len + 5);
   strcpy(idx_fn, fn);
   strcpy(idx_fn + len, ".idx");
 	idx_fp = fopen(idx_fn, "rb+");
+
   if (idx_fp == NULL) {
     idx_fp = fopen(idx_fn, "wb+");
+
+    // write header
     idx_header.head = sizeof(idx_header);
     idx_header.root = 0;
     idx_header.height = 0;
     idx_header.size = 0;
     fwrite(&idx_header, sizeof(idx_header), 1, idx_fp);
+
+    // write head node
     header_t header;
-    header.size = 0xffffffffffffffff;
+    header.size = INFINITY;
     header.next = 0;
     fwrite(&header, sizeof(header), 1, idx_fp);
   }
   else {
     fread(&idx_header, sizeof(idx_header), 1, idx_fp);
   }
+
   dat_fn = malloc(len + 5);
 	strcpy(dat_fn, fn);
   strcpy(dat_fn + len, ".dat");
 	dat_fp = fopen(dat_fn, "rb+");
+
   if (dat_fp == NULL) {
     dat_fp = fopen(dat_fn, "wb+");
+
+    // write header
+    dat_header.head = sizeof(dat_header);
+    dat_header.size = 0;
+    fwrite(&dat_header, sizeof(dat_header), 1, dat_fp);
+
+    // write head node
+    header_t header;
+    header.size = INFINITY;
+    header.next = 0;
+    fwrite(&header, sizeof(header), 1, dat_fp);
+  }
+  else {
+    fread(&dat_header, sizeof(dat_header), 1, dat_fp);
   }
 }
 
@@ -93,22 +122,6 @@ static void read_node(bpnode* node, uint64_t offset) {
 }
 
 /*
- * read one data
- *
- * when data is used,
- * - free(data->data);
- * - free(data);
- */
-static data_t* read_data(uint64_t offset) {
-	fseek(dat_fp, offset, SEEK_SET);
-	data_t* data = malloc(sizeof(data_t));
-	fread(&data->size, sizeof(data->size), 1, dat_fp);
-	data->data = malloc(data->size * sizeof(char));
-	fread(data->data, sizeof(*data->data), data->size, dat_fp);
-	return data;
-}
-
-/*
  * write one node
  */
 static void update_node(const bpnode* node, uint64_t offset) {
@@ -123,28 +136,35 @@ static void update_node(const bpnode* node, uint64_t offset) {
  */
 static uint64_t alloc_node(const bpnode* node) {
 	uint64_t offset = idx_header.head + sizeof(header_t); // return ptr to allocated space
+
   header_t header;
   fseek(idx_fp, idx_header.head, SEEK_SET);
   fread(&header, sizeof(header), 1, idx_fp);
+
 	if (header.size == sizeof(bpnode)) { // allocate the hole block
 		uint64_t magic = MAGIC;
     fseek(idx_fp, idx_header.head + sizeof(header.size), SEEK_SET);
     fwrite(&magic, sizeof(magic), 1, idx_fp);
+
     idx_header.head = header.next;
 	}
 	else { // split
     fseek(idx_fp, idx_header.head + NODE_SIZE, SEEK_SET);
     fwrite(&header, sizeof(header), 1, idx_fp);
+
     header.size = sizeof(bpnode);
     header.next = MAGIC;
     fseek(idx_fp, idx_header.head, SEEK_SET);
     fwrite(&header, sizeof(header), 1, idx_fp);
+
     idx_header.head += NODE_SIZE;
 	}
 
 	update_node(node, offset);
+
 	idx_header.size++;
   update_idx_header();
+
 	return offset;
 }
 
@@ -154,13 +174,12 @@ static uint64_t alloc_node(const bpnode* node) {
  */
 static void free_node(uint64_t offset) {
   header_t header;
+
   offset -= sizeof(header_t);
   fseek(idx_fp, offset, SEEK_SET);
   fread(&header, sizeof(header), 1, idx_fp);
-  if (header.next != MAGIC) {
-    fprintf(stderr, "error: free_node: wrong magic number.\n");
-    abort();
-  }
+
+  assert(header.next == MAGIC);
 
   header.next = idx_header.head;
   fseek(idx_fp, offset, SEEK_SET);
@@ -172,112 +191,159 @@ static void free_node(uint64_t offset) {
 }
 
 /*
+ * read one data
+ *
+ * when data is used,
+ * - free(data->data);
+ * - free(data);
+ */
+static data_t* read_data(uint64_t offset) {
+  fseek(dat_fp, offset, SEEK_SET);
+
+  data_t* data = malloc(sizeof(data_t));
+	fread(&data->size, sizeof(data->size), 1, dat_fp);
+
+	data->data = malloc(data->size * sizeof(char));
+	fread(data->data, sizeof(*data->data), data->size, dat_fp);
+
+	return data;
+}
+
+/*
  * allocate a space for a data and write it
  * return the offset of the new data
- * this function will be updated next version
  */
 uint64_t alloc_data(const char* data, uint64_t size) {
-  fseek(dat_fp, 0, SEEK_END);
-	uint64_t offset = ftell(dat_fp);
-  fwrite(&size, sizeof(size), 1, dat_fp);
-  fwrite(data, sizeof(*data), size, dat_fp);
-  fflush(dat_fp);
-	return offset;
-}
+  uint64_t size_tmp = (((size >> 4) + ((size & 0xf) != 0)) << 4); // ((size + 15) // 16) * 16
 
-/*
- * try to update a data to the offset
- * return `1` if success and `0` if fail
- */
-static int update_data(uint64_t offset, const char* data, uint64_t size) {
-	fseek(dat_fp, offset, SEEK_SET);
-	uint64_t cap;
-  fread(&cap, sizeof(cap), 1, dat_fp);
-	if (cap < size)
-		return 0;
-  fseek(dat_fp, offset, SEEK_SET);
-  fwrite(&size, sizeof(size), 1, dat_fp);
-  fwrite(data, sizeof(*data), size, dat_fp);
-	fflush(dat_fp);
-  return 1;
-}
+  header_t header;
 
-/*
-void* falloc(size_t size)
-{
-  FILE* fp = fopen(fn, "rb+");
-  assert(fp != NULL); // consider encapsulate C lib functions?
+	uint64_t pp = HEAD;
+  uint64_t p;
+  uint64_t best;
+  // uint64_t pbest;
+  uint64_t ppbest = 0;
 
-	size = (((size >> 4) + ((size & (size_t)0x0f) != 0)) << 4);
+  fseek(dat_fp, pp, SEEK_SET);
+  fread(&p, sizeof(p), 1, dat_fp);
 
-  node_t node;
-  fseek(head);
-  fread(&node, sizeof(node), 1, fp);
-  if (node.size >= size) {
-    ;
+  while (p != 0) {
+    fseek(dat_fp, p, SEEK_SET);
+    fread(&header, sizeof(header), 1, dat_fp);
+
+    if (header.size >= size_tmp && (ppbest == 0 || (header.size < best))) {
+      best = header.size;
+      ppbest = pp;
+    }
+
+    pp = p + sizeof(header.size);
+    p = header.next;
   }
 
-	uint64_t pre; // ??? so many variable!!!
-  uint64_t best;
-  while ()
-	
-	for (node_t** pp = &head; *pp != NULL; pp = &(*pp)->next) {
-		if ((*pp)->size >= size && (best == NULL || (*pp)->size < (*best)->size)) {
-			best = pp;
+	if (ppbest != 0) {
+    uint64_t pbest;
+    fseek(dat_fp, ppbest, SEEK_SET);
+    fread(&pbest, sizeof(pbest), 1, dat_fp);
+
+		uint64_t offset = pbest + sizeof(header_t); // return ptr to allocated space
+
+    fseek(dat_fp, pbest, SEEK_SET);
+    fread(&header, sizeof(header), 1, dat_fp);
+
+		if (header.size - size_tmp < MIN_BLOCK_SIZE) { // allocate the hole block
+		  uint64_t magic = MAGIC;
+      fseek(dat_fp, pbest + sizeof(header.size), SEEK_SET);
+      fwrite(&magic, sizeof(magic), 1, dat_fp);
+
+      fseek(dat_fp, ppbest, SEEK_SET);
+      fwrite(&header.next, sizeof(header.next), 1, dat_fp);
 		}
-	}
-	
-	if (best != NULL) {
-		void* ptr = (void*)(*best) + sizeof(header_t); // return ptr to allocated space
-		
-		if ((*best)->size - size >= MIN_FREE_BLOCK_SIZE) { // split
-			node_t* remain = (void*)(*best) + sizeof(header_t) + size;
-			remain->size = (*best)->size - size - sizeof(header_t);
-			remain->next = (*best)->next;
-			(*best)->size = size;
-			(*best)->next = (node_t*)MAGIC;
-			*best = remain;
+		else { // split
+      header.size -= size_tmp;
+      fseek(dat_fp, pbest + size_tmp, SEEK_SET);
+      fwrite(&header, sizeof(header), 1, dat_fp);
+
+      header.size = size_tmp;
+      header.next = MAGIC;
+      fseek(dat_fp, pbest, SEEK_SET);
+      fwrite(&header, sizeof(header), 1, dat_fp);
+      
+      pbest += size_tmp;
+      fseek(dat_fp, ppbest, SEEK_SET);
+      fwrite(&pbest, sizeof(pbest), 1, dat_fp);
 		}
-		else { // allocate the hole block
-			(*best)->next = (node_t*)MAGIC;
-			*best = (*best)->next;
-		}
-		
-		return ptr;
+
+    fseek(dat_fp, HEAD, SEEK_SET);
+    fread(&dat_header, sizeof(dat_header), 1, dat_fp);
+		dat_header.size++;
+    fseek(dat_fp, HEAD, SEEK_SET);
+    fwrite(&dat_header, sizeof(dat_header), 1, dat_fp);
+
+    fseek(dat_fp, offset, SEEK_SET);
+    fwrite(&size, sizeof(size), 1, dat_fp);
+    fwrite(data, sizeof(*data), size, dat_fp);
+    fflush(dat_fp);
+		return offset;
 	}
 	else {
-		return NULL;
+		return 0;
 	}
 }
 
-void mm_free(void* ptr)
-{
-	header_t* hptr = (void*)ptr - sizeof(header_t);
-	assert(hptr->magic == MAGIC);
+void free_data(uint64_t offset) {
+	header_t header;
+
+  offset -= sizeof(header_t);
+
+  fseek(dat_fp, offset, SEEK_SET);
+  fread(&header, sizeof(header), 1, dat_fp);
+
+  assert(header.next == MAGIC);
 	
-	node_t** pp = &head;
-	
-	for (; *pp != NULL && (void*)(*pp) < (void*)(hptr); pp = &(*pp)->next);
-	
-	node_t* node = (node_t*)hptr;
-	node->next = *pp;
-	*pp = node;
+	uint64_t pp = HEAD;
+  uint64_t p;
+
+  fseek(dat_fp, pp, SEEK_SET);
+  fread(&p, sizeof(p), 1, dat_fp);
+
+  while (p != 0 && p < offset) {
+    pp = p + sizeof(header.size);
+    fseek(dat_fp, pp, SEEK_SET);
+    fread(&p, sizeof(p), 1, dat_fp);
+  }
+
+	header.next = p;
+	p = offset;
 	
 	// merge
 	
-	node_t* next = node->next;
-	if (next != NULL && (void*)node + sizeof(node_t) + node->size == (void*)next) {
-		node->size += sizeof(node_t) + next->size;
-		node->next = next->next;
+	uint64_t next_off = header.next;
+
+	if (next_off != 0 && offset + sizeof(header_t) + header.size == next_off) {
+    header_t next; 
+    fseek(dat_fp, next_off, SEEK_SET);
+    fread(&next, sizeof(next), 1, dat_fp);
+		
+    header.size += sizeof(header_t) + next.size;
+		header.next = next.next;
+    fseek(dat_fp, offset, SEEK_SET);
+    fwrite(&header, sizeof(header), 1, dat_fp);
 	}
 	
-	node_t* prev = (void*)(pp) - sizeof(size_t);
-	if (pp != &head && (void*)prev + sizeof(node_t) + prev->size == (void*)node) {
-		prev->size += sizeof(node_t) + node->size;
-		prev->next = node->next;
-	}
+	if (pp != HEAD) {
+    uint64_t prev_off = pp - sizeof(header.size);
+    header_t prev;
+    fseek(dat_fp, prev_off, SEEK_SET);
+    fread(&prev, sizeof(prev), 1, dat_fp);
+
+	  if (prev_off + sizeof(header_t) + prev.size == offset) {
+	  	prev.size += sizeof(header_t) + header.size;
+	  	prev.next = header.next;
+      fseek(dat_fp, prev_off, SEEK_SET);
+      fwrite(&prev, sizeof(prev), 1, dat_fp);
+	  }
+  }
 }
-*/
 
 static void split_ith_child(uint64_t offset, int i) {
 	bpnode parent, left, right;
@@ -501,6 +567,7 @@ static int erase_nonunderflow(uint64_t offset, uint64_t key) {
 		if (root.keys[i] != key)
 			return 0;
 		else {
+      free_data(root.children[i]);
 			root.size--;
 			for (int j = i; j < root.size; j++)
 				root.keys[j] = root.keys[j + 1];
@@ -609,10 +676,8 @@ int update(uint64_t key, const char* data, uint64_t size) {
 	if (offset == 0xffffffffffffffff)
 		return 0;
 	else {
-		if (!update_data(offset, data, size)) {
-			erase(key);
-			insert(key, data, size);
-		}
+		erase(key);
+		insert(key, data, size);
 	}
 	return 1;
 }

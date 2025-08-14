@@ -5,9 +5,15 @@
 
 int ans[1000];
 
+void init_test() {
+  for (int i = 0; i < 1000; i++) {
+    ans[i] = 0;
+  }
+}
+
 int func(char* s) { 
-  s[5] = (rand() % 10) ^ '0';
-  s[6] = (rand() % 10) ^ '0';
+  s[5] = '0';//(rand() % 10) ^ '0';
+  s[6] = '0';//(rand() % 10) ^ '0';
   s[7] = (rand() % 10) ^ '0';
   int num = s[5] ^ '0';
   num *= 10;
@@ -18,9 +24,7 @@ int func(char* s) {
 }
 
 int main() {
-  for (int i = 0; i < 1000; i++) {
-    ans[i] = 0;
-  }
+  init_test();
   init("test");
   char* s = strdup("data 000");
   int len = strlen(s) + 1;
