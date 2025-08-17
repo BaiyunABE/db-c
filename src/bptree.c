@@ -9,7 +9,7 @@
 #include <string.h>
 #include <assert.h>
 
-#define ORDER 4
+#define ORDER 254
 #define NODE_SIZE (sizeof(bpnode) + sizeof(header_t))
 #define MAGIC 0x1234567
 #define BRUNCH 0x01
@@ -214,15 +214,16 @@ static data_t* read_data(uint64_t offset) {
  * return the offset of the new data
  */
 uint64_t alloc_data(const char* data, uint64_t size) {
-  uint64_t size_tmp = (((size >> 4) + ((size & 0xf) != 0)) << 4); // ((size + 15) // 16) * 16
+  uint64_t size_tmp = size + sizeof(uint64_t);
+  size_tmp = (((size_tmp >> 4) + ((size_tmp & 0xf) != 0)) << 4); // ((size_tmp + 15) // 16) * 16
 
   header_t header;
 
 	uint64_t pp = HEAD;
   uint64_t p;
   uint64_t best;
-  // uint64_t pbest;
-  uint64_t ppbest = 0;
+  uint64_t pbest = 0;
+  uint64_t ppbest;
 
   fseek(dat_fp, pp, SEEK_SET);
   fread(&p, sizeof(p), 1, dat_fp);
@@ -231,8 +232,9 @@ uint64_t alloc_data(const char* data, uint64_t size) {
     fseek(dat_fp, p, SEEK_SET);
     fread(&header, sizeof(header), 1, dat_fp);
 
-    if (header.size >= size_tmp && (ppbest == 0 || (header.size < best))) {
+    if (header.size >= size_tmp && (pbest == 0 || (header.size < best))) {
       best = header.size;
+      pbest = p;
       ppbest = pp;
     }
 
@@ -240,11 +242,7 @@ uint64_t alloc_data(const char* data, uint64_t size) {
     p = header.next;
   }
 
-	if (ppbest != 0) {
-    uint64_t pbest;
-    fseek(dat_fp, ppbest, SEEK_SET);
-    fread(&pbest, sizeof(pbest), 1, dat_fp);
-
+	if (pbest != 0) {
 		uint64_t offset = pbest + sizeof(header_t); // return ptr to allocated space
 
     fseek(dat_fp, pbest, SEEK_SET);
@@ -259,8 +257,8 @@ uint64_t alloc_data(const char* data, uint64_t size) {
       fwrite(&header.next, sizeof(header.next), 1, dat_fp);
 		}
 		else { // split
-      header.size -= size_tmp;
-      fseek(dat_fp, pbest + size_tmp, SEEK_SET);
+      header.size -= (sizeof(header_t) + size_tmp);
+      fseek(dat_fp, pbest + sizeof(header_t) + size_tmp, SEEK_SET);
       fwrite(&header, sizeof(header), 1, dat_fp);
 
       header.size = size_tmp;
@@ -268,7 +266,7 @@ uint64_t alloc_data(const char* data, uint64_t size) {
       fseek(dat_fp, pbest, SEEK_SET);
       fwrite(&header, sizeof(header), 1, dat_fp);
       
-      pbest += size_tmp;
+      pbest += (sizeof(header_t) + size_tmp);
       fseek(dat_fp, ppbest, SEEK_SET);
       fwrite(&pbest, sizeof(pbest), 1, dat_fp);
 		}
@@ -329,6 +327,10 @@ void free_data(uint64_t offset) {
     fseek(dat_fp, offset, SEEK_SET);
     fwrite(&header, sizeof(header), 1, dat_fp);
 	}
+  else {
+    fseek(dat_fp, offset, SEEK_SET);
+    fwrite(&header, sizeof(header), 1, dat_fp);
+  }
 	
 	if (pp != HEAD) {
     uint64_t prev_off = pp - sizeof(header.size);
@@ -342,7 +344,21 @@ void free_data(uint64_t offset) {
       fseek(dat_fp, prev_off, SEEK_SET);
       fwrite(&prev, sizeof(prev), 1, dat_fp);
 	  }
+    else {
+      fseek(dat_fp, pp, SEEK_SET);
+      fwrite(&p, sizeof(p), 1, dat_fp);
+    }
   }
+  else {
+    fseek(dat_fp, pp, SEEK_SET);
+    fwrite(&p, sizeof(p), 1, dat_fp);
+  }
+
+    fseek(dat_fp, HEAD, SEEK_SET);
+    fread(&dat_header, sizeof(dat_header), 1, dat_fp);
+		dat_header.size--;
+    fseek(dat_fp, HEAD, SEEK_SET);
+    fwrite(&dat_header, sizeof(dat_header), 1, dat_fp);
 }
 
 static void split_ith_child(uint64_t offset, int i) {

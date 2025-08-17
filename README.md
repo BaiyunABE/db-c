@@ -168,7 +168,7 @@ Use byte count method to isolate each data. Format is below.
 
 ## Steps
 1. Translate codes in `db-cpp` to C.(done)
-2. Add free list.
+2. Add free list.(done)
 3. Cache.
 4. Add new functions.
 5. ...

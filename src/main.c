@@ -12,14 +12,23 @@ void init_test() {
 }
 
 int func(char* s) { 
-  s[5] = '0';//(rand() % 10) ^ '0';
-  s[6] = '0';//(rand() % 10) ^ '0';
+  s[5] = (rand() % 10) ^ '0';
+  s[6] = (rand() % 10) ^ '0';
   s[7] = (rand() % 10) ^ '0';
   int num = s[5] ^ '0';
   num *= 10;
   num += (s[6] ^ '0');
   num *= 10;
   num += (s[7] ^ '0');
+  if (s[5] == '0') {
+    s[5] = s[6];
+    s[6] = s[7];
+    s[7] = '\0';
+  }
+  if (s[5] == '0') {
+    s[5] = s[6];
+    s[6] = '\0';
+  }
   return num;
 }
 
@@ -27,9 +36,9 @@ int main() {
   init_test();
   init("test");
   char* s = strdup("data 000");
-  int len = strlen(s) + 1;
   while (1) {
     int num = func(s);
+    int len = strlen(s) + 1;
     int r = rand();
     if (r % 3 == 0) {
       int rv = insert(num, s, len);
