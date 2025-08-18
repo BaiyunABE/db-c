@@ -20,7 +20,7 @@ A B+ tree-based database indexing implementation in C.
 ```bash
 make                   # Compile using Makefile
 cd bin
-main                 # Run the program
+./main                 # Run the program
 ```
 
 ## Testing
