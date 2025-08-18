@@ -1,5 +1,40 @@
 # B+ Tree on File
 
+A B+ tree-based database indexing implementation in C.
+
+## Project Structure
+```
+
+.
+├── Makefile           # Build configuration
+├── README.md          # Project documentation
+├── src/               # Core source files
+│   ├── bptree.c       # B+ tree implementation
+│   ├── bptree.h       # B+ tree header
+│   └── main.c         # Main program
+└── test/
+    └── test.sh        # Test script
+```
+
+## Build & Run
+```bash
+make                   # Compile using Makefile
+cd bin
+main                 # Run the program
+```
+
+## Testing
+Execute test scripts:
+```bash
+chmod +x test/*.sh
+test/test.sh            # Run test
+```
+
+## Features
+- B+ tree implementation for efficient indexing
+- Disk-based storage operations
+- Test scripts for verification
+
 ## Index File
 
 - The index file adopts a four hierarchical design.
@@ -164,7 +199,7 @@ Use byte count method to isolate each data. Format is below.
 +--------------------------------------+
 ```
 
-- `size`: The size of data.
+- `size`: The size of [data].
 
 ## Steps
 1. Translate codes in `db-cpp` to C.(done)
