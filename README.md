@@ -4,7 +4,6 @@ A B+ tree-based database indexing implementation in C.
 
 ## Project Structure
 ```
-
 .
 ├── Makefile           # Build configuration
 ├── README.md          # Project documentation
@@ -35,7 +34,9 @@ test/test.sh            # Run test
 - Disk-based storage operations
 - Test scripts for verification
 
-## Index File
+## About File
+
+### Index File
 
 - The index file adopts a four hierarchical design.
 - User can just operate key and value, need not learn about lower layer.
@@ -53,12 +54,7 @@ test/test.sh            # Run test
 +---------+
 ```
 
-1. Use C library functions, like `fopen()`, `fclose()`, `fread()`, `fwrite()`, `fseek()` and so on.
-2. Use free list and provide function like `alloc_node()`, `free_node()` and so on.
-3. Use B+ tree and provide function like `create()`, `insert()`, `erase()`, `update()` and so on.
-4. Use finite state machine to support request of application layer, like SQL.
-
-### Index Header
+#### Index Header
 ```text
 0    8   16   24   32   40   48   56  63
 +--------------------------------------+
@@ -85,8 +81,6 @@ typedef struct {
   uint64_t size;
 } idx_header;
 ```
-
-### Index Node
 
 #### Free List Node
 
@@ -139,11 +133,11 @@ B+ tree node encapsulates data. Format is below.
 +--------------------------------------+
 ```
 
-- `type`: The type of this node. `0x1` for brunch and `0x2` for leaf.
+- `type`: The type of this node. `0x1` for branch and `0x2` for leaf.
 - `size`: The number of keys in this node.
 - `reserved`: Unused space for future.
 - `keys`: Array of keys of data.
-- `children`: Array of children when node is a brunch, or array of addresses of data when node is a leaf.
+- `children`: Array of children when node is a branch, or array of addresses of data when node is a leaf.
 - `next`: Next B+ tree node.
 
 ```c
@@ -164,13 +158,15 @@ typedef struct {
 #define ORDER 254
 ```
 
-## Data File
+### Data File
 
 Use hierarchy similar to index file.
 
 ```text
 +---------+
 |   data  |
++---------+
+|data node|
 +---------+
 |free list|
 +---------+
@@ -179,12 +175,47 @@ Use hierarchy similar to index file.
 ```
 
 Compare with index file,
-- Data file has no header now, because no information of hole file need to memory.
 - There is no B+ node, but data, maybe string or binary data whose format is defined by user.
 - Different allocated node may have different size, which request more intelligent allocating strategy.
 - When a B+ node in index file is a leaf, its children means offset in this file.
 
-### Data Node
+#### Data Header
+```text
+0    8   16   24   32   40   48   56  63
++--------------------------------------+
+|                 head                 |
++--------------------------------------+
+|                 root                 |
++--------------------------------------+
+```
+
+- `head`: The offset of the head node of free list.
+- `size`: The number of the nodes of the B+ tree.
+
+```c
+typedef struct {
+  uint64_t head;
+  uint64_t size;
+} dat_header;
+```
+
+#### Free List Node
+Same to index file.
+
+```text
+0    8   16   24   32   40   48   56  63
++--------------------------------------+
+|                 size                 |
++--------------------------------------+
+|                 next                 |
++--------------------------------------+
+/                                      /
+/               data node              /
+/                                      /
++--------------------------------------+
+```
+
+#### Data Node
 
 Use byte count method to isolate each data. Format is below.
 
@@ -199,11 +230,19 @@ Use byte count method to isolate each data. Format is below.
 +--------------------------------------+
 ```
 
-- `size`: The size of [data].
+- `size`: The size of data.
 
-## Steps
+```c
+typedef struct {
+  uint64_t size;
+  char* data;
+} data_t;
+```
+
+## Next Steps
 1. Translate codes in `db-cpp` to C.(done)
 2. Add free list.(done)
-3. Cache.
-4. Add new functions.
-5. ...
+3. Multi-thread.
+4. Cache.
+5. Add new functions.
+6. ...
